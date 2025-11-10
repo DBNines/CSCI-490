@@ -62,6 +62,44 @@ class GunshotDataset(Dataset):
 
         return mel, label
     
+def predict_single_file(model, filepath, sample_rate=16000, n_mels=64, max_len=321, device="cpu"):
+    model.eval()  # Set model to evaluation mode
+
+    # Load audio
+    waveform, sr = torchaudio.load(filepath)
+
+    # Convert to mono if needed
+    if waveform.shape[0] > 1:
+        waveform = waveform.mean(dim=0, keepdim=True)
+
+    # Resample if needed
+    if sr != sample_rate:
+        waveform = torchaudio.transforms.Resample(sr, sample_rate)(waveform)
+
+    # Convert to Mel spectrogram
+    melspec = torchaudio.transforms.MelSpectrogram(
+        sample_rate=sample_rate,
+        n_mels=n_mels
+    )
+    mel = melspec(waveform)
+
+    # Pad or truncate to fixed length
+    if mel.shape[2] < max_len:
+        pad = max_len - mel.shape[2]
+        mel = F.pad(mel, (0, pad))
+    else:
+        mel = mel[:, :, :max_len]
+
+    # Add batch dimension and send to device
+    mel = mel.unsqueeze(0).to(device)
+
+    # Forward pass
+    with torch.no_grad():
+        output = model(mel)
+        pred = output.argmax(dim=1).item()
+
+    return "Gunshot" if pred == 1 else "Non-Gunshot"
+    
 class GunshotCNN(nn.Module):
     def __init__(self, n_mels=64, time_steps=321):
         super().__init__()
@@ -138,6 +176,9 @@ def main():
     for epoch in range(epochs):
         model.train()
         total_loss = 0
+        correct = 0
+        total = 0
+
         for mel, label in train_loader:
             mel = mel.to(device)
             label = label.to(device)
@@ -150,6 +191,23 @@ def main():
 
             total_loss += loss.item()
 
-        print(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss:.4f}")
+            # Compute batch accuracy
+            preds = output.argmax(dim=1)
+            correct += (preds == label).sum().item()
+            total += label.size(0)
+
+        epoch_loss = total_loss / len(train_loader)
+        epoch_acc = correct / total * 100
+
+        print(f"Epoch {epoch+1}/{epochs}, Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.2f}%")
+
+    model.eval()
+    test_file = "testShot.wav"
+    result = predict_single_file(model, test_file, device=device)
+    print(f"The model predicts for shot: {result}")
+
+    nongunshot_file = "nonShot.wav"
+    result2 = predict_single_file(model, nongunshot_file, device=device)
+    print(f"The model predicts for non shot: {result2}")
 
 main()
