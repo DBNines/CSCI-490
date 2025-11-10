@@ -1,0 +1,7 @@
+kagglehub
+torch 
+torchaudio 
+torchcodec
+librosa 
+numpy 
+matplotlib
