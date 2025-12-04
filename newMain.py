@@ -8,9 +8,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pandas as pd
 
-# Placeholder Global Variables for Standardization
-GLOBAL_MEAN = 0.0
-GLOBAL_STD = 1.0
+#  Global Variables for Standardization
+GLOBAL_MEAN = -12.9844
+GLOBAL_STD = 18.4791
 
 # -----------------------------
 # Shared Processing Function (FIXED)
@@ -63,8 +63,16 @@ def get_spectrogram(filepath, target_sample_rate=16000, max_seconds=4.0, **kwarg
     current_len = mel.shape[2]
 
     if current_len < max_len:
-        pad_amount = max_len - current_len
-        mel = F.pad(mel, (0, pad_amount), mode='constant', value=mel.mean()) 
+        # --- NEW: Loop the mel-spectrogram to fill the space ---
+        num_repeats = max_len // current_len
+        remainder = max_len % current_len
+        
+        # Repeat the spectrogram and then pad the remainder
+        looped_mel = mel.repeat(1, 1, num_repeats)
+        
+        # Pad the remainder with a value close to the mean/silence
+        remainder_pad = torch.full((1, mel.shape[1], remainder), fill_value=mel.mean())
+        mel = torch.cat([looped_mel, remainder_pad], dim=2)
     elif current_len > max_len and is_training:
         start = random.randint(0, current_len - max_len)
         mel = mel[:, :, start:start + max_len]
