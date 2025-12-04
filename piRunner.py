@@ -5,26 +5,30 @@ import torch.nn as nn
 import numpy as np
 import pyaudio
 import time
-import random
 import argparse
 import discord
+import asyncio
 
 # --- CONFIGURATION (MUST MATCH TRAINING) ---
 SAMPLE_RATE = 16000
-CHUNK_SECONDS = 1.0 # Process 1-second chunks (matches your working pistol length)
+CHUNK_SECONDS = 1.0 
 CHUNK_SIZE = int(SAMPLE_RATE * CHUNK_SECONDS)
 CHANNELS = 1
 FORMAT = pyaudio.paInt16
 
 MODEL_PATH = "gunshot_cnn_model.pth"
-MAX_SECONDS = 4 # The fixed length your model expects
+MAX_SECONDS = 4 
 N_MELS = 64
 N_FFT = 400
 HOP_LENGTH = 160
-DEVICE = "cpu" # Raspberry Pi deployment
+DEVICE = "cpu" 
 
-# --- MODEL DEFINITION (MUST MATCH TRAINING) ---
-# Paste your GunshotCNN class definition here exactly as it was during training
+# --- GLOBAL NORMALIZATION STATS (ENSURE THESE MATCH YOUR SAVED MODEL) ---
+GLOBAL_MEAN = -13.3991 
+GLOBAL_STD = 21.2402 
+DISCORD_CHANNEL_ID = 1446077899835707493
+
+# --- MODEL DEFINITION (Must match your saved model architecture) ---
 class GunshotCNN(nn.Module):
     def __init__(self, n_mels=64, max_len=None):
         super().__init__()
@@ -44,7 +48,7 @@ class GunshotCNN(nn.Module):
         self.bn3 = nn.BatchNorm2d(64)
         self.pool3 = nn.MaxPool2d(2)
 
-        self.dropout = nn.Dropout(0.5) # Assuming you set this to 0.5
+        self.dropout = nn.Dropout(0.5) 
 
         if max_len is None:
             max_len = 400 
@@ -71,18 +75,12 @@ class GunshotCNN(nn.Module):
         return self.fc2(x)
 
 
-# --- PROCESSING FUNCTION (Adapted for Real-time Stream) ---
+# --- PROCESSING FUNCTION (Using Global Stats) ---
 def process_chunk(audio_data):
     """Converts raw audio chunk (numpy array) to a normalized Mel-spectrogram tensor."""
     
-    # 1. Convert raw bytes to torch tensor
-    # PaInt16 to float32 normalized by max int value (32768)
     waveform = torch.from_numpy(audio_data.astype(np.float32) / 32768.0).unsqueeze(0)
     
-    # 2. Resample (Not needed if mic is set to 16k, but good practice if needed)
-    # The microphone settings should be configured to capture at 16000 Hz.
-    
-    # 3. Create Mel Spectrogram
     melspec_transform = torchaudio.transforms.MelSpectrogram(
         sample_rate=SAMPLE_RATE,
         n_mels=N_MELS,
@@ -91,44 +89,89 @@ def process_chunk(audio_data):
     )
     mel = melspec_transform(waveform)
 
-    # 4. Convert to Decibels & Normalization (Crucial!)
     db_transform = torchaudio.transforms.AmplitudeToDB(stype='power', top_db=80)
     mel = db_transform(mel)
     
-    # Standardization (Mean/Std)
-    mel = (mel - mel.mean()) / (mel.std() + 1e-6)
+    # Use Global Standardization
+    mel = (mel - GLOBAL_MEAN) / (GLOBAL_STD + 1e-6)
     
-    # 5. Padding/Cropping to MAX_SECONDS (4.0s) length
-    # This section ensures the 1-second chunk is correctly placed in the 4-second input your model expects.
+    # Padding/Cropping to MAX_SECONDS (4.0s) length
     max_len = int(MAX_SECONDS * SAMPLE_RATE / HOP_LENGTH)
     
     if mel.shape[2] < max_len:
-        # Pad the 1-second clip to fill the 4-second model input
         pad_amount = max_len - mel.shape[2]
-        # Pad with a value close to the mean/silence
-        mel = F.pad(mel, (0, pad_amount), mode='constant', value=mel.mean())
+        # Pad with the GLOBAL mean/silence value
+        mel = F.pad(mel, (0, pad_amount), mode='constant', value=GLOBAL_MEAN) 
     else:
-        # Should not happen if chunk is 1 second, but ensures size is correct
         mel = mel[:, :, :max_len] 
 
-    return mel.unsqueeze(0).to(DEVICE) # Add batch dimension
+    return mel.unsqueeze(0).to(DEVICE)
 
 # --- DISCORD SENDER FUNCTION ---
 async def send_discord_message(client, message):
     """Asynchronously sends a message to the specified Discord channel."""
     await client.wait_until_ready()
     try:
-        channel = client.get_channel(1446077899835707493)
+        channel = client.get_channel(DISCORD_CHANNEL_ID)
         if channel:
             await channel.send(message)
         else:
-            print(f"Error: Discord channel with ID {1446077899835707493} not found.")
+            print(f"Error: Discord channel with ID {DISCORD_CHANNEL_ID} not found.")
     except Exception as e:
         print(f"Error sending Discord message: {e}")
+    await asyncio.sleep(0.1) # Allow other async tasks to run
+
+
+# --- ASYNC DETECTION LOOP ---
+async def detection_loop(model, stream, p, discord_client):
+    last_detection_time = 0
+    COOLDOWN = 10 
+    
+    print("Starting audio stream detection...")
+
+    try:
+        while True:
+            # Blocking audio read (must be fast enough not to stall the loop too long)
+            data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
+            
+            np_data = np.frombuffer(data, dtype=np.int16)
+            input_tensor = process_chunk(np_data)
+            
+            with torch.no_grad():
+                output = model(input_tensor)
+                probs = F.softmax(output, dim=1).cpu().numpy()[0]
+                gun_prob = probs[1]
+            
+            current_time = time.time()
+            
+            # 4. Reporting
+            if gun_prob > 0.75:
+                print(f"🚨 GUNSHOT DETECTED! Probability: {gun_prob:.4f} @ {time.strftime('%H:%M:%S')}")
+                if (current_time - last_detection_time) > COOLDOWN:
+                    discord_message = f"**ALERT!** Gunshot detected @ {time.strftime('%Y-%m-%d %H:%M:%S')}. Prob: {gun_prob:.2f}"
+                    discord_client.loop.create_task(send_discord_message(discord_client, discord_message))
+                    last_detection_time = current_time
+
+            elif gun_prob > 0.6:
+                print(f" High confidence event: {gun_prob:.4f}")
+            else:
+                if int(time.time()) % 10 == 0: 
+                    print(f"Listening... (Gun Prob: {gun_prob:.4f})")
+            
+            await asyncio.sleep(CHUNK_SECONDS / 2) # Use asyncio.sleep
+
+    except KeyboardInterrupt:
+        print("\nStopping detector...")
+    finally:
+        # Clean Up
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
+        await discord_client.close()
+
 
 # --- MAIN DEPLOYMENT LOGIC ---
 def run_detector(token):
-    """Initializes model, PyAudio stream, and runs the continuous loop."""
     
     # 1. Load Model
     max_len = int(MAX_SECONDS * SAMPLE_RATE / HOP_LENGTH)
@@ -137,8 +180,8 @@ def run_detector(token):
         model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
         model.eval()
         print(f"Model loaded from {MODEL_PATH}")
-    except FileNotFoundError:
-        print(f"Error: Model file not found at {MODEL_PATH}. Exiting.")
+    except Exception as e:
+        print(f"Error: Model file not found or corrupted. Error: {e}. Exiting.")
         return
     
     # 2. Setup PyAudio Stream
@@ -149,7 +192,7 @@ def run_detector(token):
                     input=True,
                     frames_per_buffer=CHUNK_SIZE)
 
-    print("Starting audio stream. Listening for gunshots...")
+    print("Starting audio stream. Waiting for Discord bot to connect...")
 
     # 3. Setup Discord Bot
     intents = discord.Intents.default()
@@ -159,60 +202,20 @@ def run_detector(token):
     @discord_client.event
     async def on_ready():
         print(f'Discord bot logged in as {discord_client.user}')
-        # Start the detection loop
-        '''discord_client.loop.run_in_executor(
-            None,
-            detection_loop,
-            model, stream, p, discord_client
-        )'''
+        # Start the detection loop as an async task
+        discord_client.loop.create_task(detection_loop(model, stream, p, discord_client))
 
     # Run the Discord bot
     try:
+        # discord_client.run(token) is blocking and keeps the program alive
         discord_client.run(token)
     except Exception as e:
         print(f"Discord Bot Error: Ensure your token is correct. Error: {e}")
 
-    # 3. Continuous Detection Loop
-    try:
-        while True:
-            # Read a chunk of audio data
-            data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
-            
-            # Convert raw bytes to a NumPy array (int16)
-            np_data = np.frombuffer(data, dtype=np.int16)
-
-            # Process and convert to model input tensor
-            input_tensor = process_chunk(np_data)
-            
-            # Run prediction
-            with torch.no_grad():
-                output = model(input_tensor)
-                probs = F.softmax(output, dim=1).cpu().numpy()[0]
-                gun_prob = probs[1]
-            
-            # 4. Reporting
-            if gun_prob > 0.75: # Set a confident threshold (e.g., 90%)
-                print(f"GUNSHOT DETECTED! Probability: {gun_prob:.4f} @ {time.strftime('%H:%M:%S')}")
-            elif gun_prob > 0.6:
-                print(f" High confidence event: {gun_prob:.4f}")
-            else:
-                 # Print periodically to show the script is still running
-                 if int(time.time()) % 10 == 0: 
-                    print(f"Listening... (Gun Prob: {gun_prob:.4f})")
-                    send_discord_message(discord_client, f"Listening... (Gun Prob: {gun_prob:.4f})")
-            
-            time.sleep(CHUNK_SECONDS / 2) # Wait slightly less than CHUNK_SECONDS for continuous listening
-
-    except KeyboardInterrupt:
-        print("\nStopping detector...")
-    finally:
-        # 5. Clean Up
-        stream.stop_stream()
-        stream.close()
-        p.terminate()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Raspberry Pi Gunshot Detector with Discord Notifications.")
     parser.add_argument("--token", required=True, help="Your Discord bot token.")
     args = parser.parse_args()
+    
     run_detector(args.token)
