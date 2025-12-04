@@ -93,12 +93,13 @@ def predict_single_file(model, filepath, sample_rate=16000, n_mels=64, max_len=3
     # Add batch dimension and send to device
     mel = mel.unsqueeze(0).to(device)
 
-    # Forward pass
     with torch.no_grad():
         output = model(mel)
-        pred = output.argmax(dim=1).item()
+        probs = F.softmax(output, dim=1).cpu().numpy()[0]  # Probabilities
+        pred_class = output.argmax(dim=1).item()
 
-    return "Gunshot" if pred == 1 else "Non-Gunshot"
+    print(f"{filepath} - Probabilities: Gunshot={probs[1]:.4f}, Non-Gunshot={probs[0]:.4f}")
+    return "Gunshot" if pred_class == 1 else "Non-Gunshot"
     
 class GunshotCNN(nn.Module):
     def __init__(self, n_mels=64, time_steps=321):
@@ -115,6 +116,7 @@ class GunshotCNN(nn.Module):
         self.flattened_size = x.numel() // x.shape[0]
 
         self.fc1 = nn.Linear(self.flattened_size, 64)
+        self.dropout = nn.Dropout(0.3)
         self.fc2 = nn.Linear(64, 2)
 
     def forward(self, x):
@@ -124,6 +126,7 @@ class GunshotCNN(nn.Module):
         x = F.max_pool2d(x, 2)
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
+        x = self.dropout(x)
         return self.fc2(x)
     
 def prepare_nongunshots(audio_root, dest_folder, max_files=None):
@@ -153,10 +156,7 @@ def main():
     pathToUrbanSound = kagglehub.dataset_download("chrisfilo/urbansound8k")
     print("UrbanSound dataset at:", pathToUrbanSound)
 
-    # Only run this once
-    #prepare_nongunshots(pathToUrbanSound, "Non-Gunshot", max_files=2000)
-    #print("Non-Gunshot samples copied.")
-
+    
     dataset = GunshotDataset(
         root_dir=pathToGunShot,
         nongunshot_dir="Non-Gunshot"
@@ -168,8 +168,15 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = GunshotCNN().to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    loss_fn = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+    num_gunshots = sum(dataset.labels)
+    num_nongunshots = len(dataset.labels) - num_gunshots
+
+    # Compute class weights: inverse frequency
+    weights = torch.tensor([num_nongunshots / len(dataset.labels),
+                            num_gunshots / len(dataset.labels)], dtype=torch.float)
+
+    loss_fn = nn.CrossEntropyLoss(weight=weights.to(device))
 
     epochs = 10
 
@@ -204,10 +211,20 @@ def main():
     model.eval()
     test_file = "testShot.wav"
     result = predict_single_file(model, test_file, device=device)
-    print(f"The model predicts for shot: {result}")
+    #print(f"The model predicts for shot: {result}")
 
     nongunshot_file = "nonShot.wav"
     result2 = predict_single_file(model, nongunshot_file, device=device)
-    print(f"The model predicts for non shot: {result2}")
+    #print(f"The model predicts for non shot: {result2}")
+
+    for file in os.listdir("shots/pistol"):
+        if file.endswith(".wav"):
+            filepath = os.path.join("shots/pistol", file)
+            result = predict_single_file(model, filepath, device=device)
+
+    for file in os.listdir("shots/pistolLonger"):
+        if file.endswith(".wav"):
+            filepath = os.path.join("shots/pistolLonger", file)
+            result = predict_single_file(model, filepath, device=device)
 
 main()

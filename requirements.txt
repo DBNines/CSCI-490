@@ -5,3 +5,4 @@ torchcodec
 librosa 
 numpy 
 matplotlib
+pandas
