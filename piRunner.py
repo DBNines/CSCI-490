@@ -15,7 +15,7 @@ CHANNELS = 1
 FORMAT = pyaudio.paInt16
 
 MODEL_PATH = "gunshot_cnn_model.pth"
-MAX_SECONDS = 4.0 # The fixed length your model expects
+MAX_SECONDS = 1 # The fixed length your model expects
 N_MELS = 64
 N_FFT = 400
 HOP_LENGTH = 160
