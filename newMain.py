@@ -135,7 +135,7 @@ class GunshotCNN(nn.Module):
         self.bn3 = nn.BatchNorm2d(64)
         self.pool3 = nn.MaxPool2d(2)
 
-        self.dropout = nn.Dropout(0.4)
+        self.dropout = nn.Dropout(0.6)
 
         # Calculate flattened size dynamically
         if max_len is None:
@@ -212,7 +212,7 @@ def main():
     
     # 4. Optimizer & Loss 
     # REMOVED WEIGHTS: Data is already balanced!
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-3)
     loss_fn = nn.CrossEntropyLoss() 
 
     # 5. Train

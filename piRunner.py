@@ -155,10 +155,10 @@ def run_detector():
                 gun_prob = probs[1]
             
             # 4. Reporting
-            if gun_prob > 0.90: # Set a confident threshold (e.g., 90%)
-                print(f" GUNSHOT DETECTED! Probability: {gun_prob:.4f} @ {time.strftime('%H:%M:%S')} 🚨🚨")
-            elif gun_prob > 0.5:
-                print(f" High confidence event: {gun_prob:.4f}")
+            if gun_prob > 0.95: # Set a confident threshold (e.g., 90%)
+                print(f"GUNSHOT DETECTED! Probability: {gun_prob:.4f} @ {time.strftime('%H:%M:%S')}")
+            #elif gun_prob > 0.5:
+                #print(f" High confidence event: {gun_prob:.4f}")
             else:
                  # Print periodically to show the script is still running
                  if int(time.time()) % 10 == 0: 
