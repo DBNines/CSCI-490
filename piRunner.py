@@ -93,7 +93,7 @@ def process_chunk(audio_data):
     mel = db_transform(mel)
     
     # Use Global Standardization
-    mel = (mel - GLOBAL_MEAN) / (GLOBAL_STD + 1e-6)
+    mel = F.pad(mel, (0, pad_amount), mode='constant', value=mel.mean())
     
     # Padding/Cropping to MAX_SECONDS (4.0s) length
     max_len = int(MAX_SECONDS * SAMPLE_RATE / HOP_LENGTH)
