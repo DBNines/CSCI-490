@@ -92,8 +92,8 @@ def process_chunk(audio_data):
     db_transform = torchaudio.transforms.AmplitudeToDB(stype='power', top_db=80)
     mel = db_transform(mel)
     
-    # Use Global Standardization
-    mel = F.pad(mel, (0, pad_amount), mode='constant', value=mel.mean())
+    # Use Standardization
+    mel = (mel - mel.mean()) / (mel.std() + 1e-6)
     
     # Padding/Cropping to MAX_SECONDS (4.0s) length
     max_len = int(MAX_SECONDS * SAMPLE_RATE / HOP_LENGTH)
