@@ -78,9 +78,15 @@ class GunshotCNN(nn.Module):
 # --- PROCESSING FUNCTION (Using Global Stats) ---
 def process_chunk(audio_data):
     """Converts raw audio chunk (numpy array) to a normalized Mel-spectrogram tensor."""
-    
+
+    # 1. Convert raw bytes to torch tensor
+    # PaInt16 to float32 normalized by max int value (32768)
     waveform = torch.from_numpy(audio_data.astype(np.float32) / 32768.0).unsqueeze(0)
+
+    # 2. Resample (Not needed if mic is set to 16k, but good practice if needed)
+    # The microphone settings should be configured to capture at 16000 Hz.
     
+    # 3. Create Mel Spectrogram
     melspec_transform = torchaudio.transforms.MelSpectrogram(
         sample_rate=SAMPLE_RATE,
         n_mels=N_MELS,
@@ -89,23 +95,27 @@ def process_chunk(audio_data):
     )
     mel = melspec_transform(waveform)
 
+    # 4. Convert to Decibels & Normalization (Crucial!)
     db_transform = torchaudio.transforms.AmplitudeToDB(stype='power', top_db=80)
     mel = db_transform(mel)
-    
-    # Use Standardization
+
+    # Standardization (Mean/Std)
     mel = (mel - mel.mean()) / (mel.std() + 1e-6)
-    
-    # Padding/Cropping to MAX_SECONDS (4.0s) length
+
+    # 5. Padding/Cropping to MAX_SECONDS (4.0s) length
+    # This section ensures the 1-second chunk is correctly placed in the 4-second input your model expects.
     max_len = int(MAX_SECONDS * SAMPLE_RATE / HOP_LENGTH)
-    
+
     if mel.shape[2] < max_len:
+        # Pad the 1-second clip to fill the 4-second model input
         pad_amount = max_len - mel.shape[2]
-        # Pad with the GLOBAL mean/silence value
-        mel = F.pad(mel, (0, pad_amount), mode='constant', value=GLOBAL_MEAN) 
+        # Pad with a value close to the mean/silence
+        mel = F.pad(mel, (0, pad_amount), mode='constant', value=mel.mean())
     else:
+        # Should not happen if chunk is 1 second, but ensures size is correct
         mel = mel[:, :, :max_len] 
 
-    return mel.unsqueeze(0).to(DEVICE)
+    return mel.unsqueeze(0).to(DEVICE) # Add batch dimension
 
 # --- DISCORD SENDER FUNCTION ---
 async def send_discord_message(client, message):
