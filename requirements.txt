@@ -6,3 +6,4 @@ librosa
 numpy 
 matplotlib
 pandas
+pyaudio
