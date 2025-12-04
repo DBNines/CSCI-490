@@ -155,7 +155,7 @@ def run_detector():
                 gun_prob = probs[1]
             
             # 4. Reporting
-            if gun_prob > 0.80: # Set a confident threshold (e.g., 90%)
+            if gun_prob > 0.75: # Set a confident threshold (e.g., 90%)
                 print(f"GUNSHOT DETECTED! Probability: {gun_prob:.4f} @ {time.strftime('%H:%M:%S')}")
             elif gun_prob > 0.6:
                 print(f" High confidence event: {gun_prob:.4f}")
