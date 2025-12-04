@@ -6,6 +6,8 @@ import numpy as np
 import pyaudio
 import time
 import random
+import argparse
+import discord
 
 # --- CONFIGURATION (MUST MATCH TRAINING) ---
 SAMPLE_RATE = 16000
@@ -111,8 +113,21 @@ def process_chunk(audio_data):
 
     return mel.unsqueeze(0).to(DEVICE) # Add batch dimension
 
+# --- DISCORD SENDER FUNCTION ---
+async def send_discord_message(client, message):
+    """Asynchronously sends a message to the specified Discord channel."""
+    await client.wait_until_ready()
+    try:
+        channel = client.get_channel(1446077899835707493)
+        if channel:
+            await channel.send(message)
+        else:
+            print(f"Error: Discord channel with ID {1446077899835707493} not found.")
+    except Exception as e:
+        print(f"Error sending Discord message: {e}")
+
 # --- MAIN DEPLOYMENT LOGIC ---
-def run_detector():
+def run_detector(token):
     """Initializes model, PyAudio stream, and runs the continuous loop."""
     
     # 1. Load Model
@@ -135,6 +150,27 @@ def run_detector():
                     frames_per_buffer=CHUNK_SIZE)
 
     print("Starting audio stream. Listening for gunshots...")
+
+    # 3. Setup Discord Bot
+    intents = discord.Intents.default()
+    intents.message_content = True 
+    discord_client = discord.Client(intents=intents)
+
+    @discord_client.event
+    async def on_ready():
+        print(f'Discord bot logged in as {discord_client.user}')
+        # Start the detection loop
+        '''discord_client.loop.run_in_executor(
+            None,
+            detection_loop,
+            model, stream, p, discord_client
+        )'''
+
+    # Run the Discord bot
+    try:
+        discord_client.run(token)
+    except Exception as e:
+        print(f"Discord Bot Error: Ensure your token is correct. Error: {e}")
 
     # 3. Continuous Detection Loop
     try:
@@ -163,6 +199,7 @@ def run_detector():
                  # Print periodically to show the script is still running
                  if int(time.time()) % 10 == 0: 
                     print(f"Listening... (Gun Prob: {gun_prob:.4f})")
+                    send_discord_message(discord_client, f"Listening... (Gun Prob: {gun_prob:.4f})")
             
             time.sleep(CHUNK_SECONDS / 2) # Wait slightly less than CHUNK_SECONDS for continuous listening
 
@@ -175,4 +212,7 @@ def run_detector():
         p.terminate()
 
 if __name__ == '__main__':
-    run_detector()
+    parser = argparse.ArgumentParser(description="Raspberry Pi Gunshot Detector with Discord Notifications.")
+    parser.add_argument("--token", required=True, help="Your Discord bot token.")
+    args = parser.parse_args()
+    run_detector(args.token)
