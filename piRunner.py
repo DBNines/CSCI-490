@@ -27,22 +27,22 @@ class GunshotCNN(nn.Module):
     def __init__(self, n_mels=64, max_len=None):
         super().__init__()
         
-        # Block 1 (UPDATED: 1 -> 32)
-        self.conv1 = nn.Conv2d(1, 32, 3, padding=1)
-        self.bn1 = nn.BatchNorm2d(32)
+        # Block 1
+        self.conv1 = nn.Conv2d(1, 16, 3, padding=1)
+        self.bn1 = nn.BatchNorm2d(16)
         self.pool1 = nn.MaxPool2d(2)
 
-        # Block 2 (UPDATED: 32 -> 64)
-        self.conv2 = nn.Conv2d(32, 64, 3, padding=1)
-        self.bn2 = nn.BatchNorm2d(64)
+        # Block 2
+        self.conv2 = nn.Conv2d(16, 32, 3, padding=1)
+        self.bn2 = nn.BatchNorm2d(32)
         self.pool2 = nn.MaxPool2d(2)
 
-        # Block 3 (UPDATED: 64 -> 128)
-        self.conv3 = nn.Conv2d(64, 128, 3, padding=1)
-        self.bn3 = nn.BatchNorm2d(128)
+        # Block 3
+        self.conv3 = nn.Conv2d(32, 64, 3, padding=1)
+        self.bn3 = nn.BatchNorm2d(64)
         self.pool3 = nn.MaxPool2d(2)
 
-        self.dropout = nn.Dropout(0.7) # Assuming you used 0.7 in the final training
+        self.dropout = nn.Dropout(0.5) # Assuming you set this to 0.5
 
         if max_len is None:
             max_len = 400 
